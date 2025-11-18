@@ -1,5 +1,9 @@
 import { prisma } from '../prisma-client';
 import type { EnrollmentStatus, StepProgressStatus, StepEvidence } from '@quest-engine/shared';
+import { eventBus } from '../lib/events/event-bus';
+import type { MemberEnrolledEvent, StepCompletedEvent, QuestCompletedEvent } from '../lib/events/types';
+import { logger } from '../lib/logger';
+import { NotFoundError, BadRequestError } from '../lib/errors';
 
 export class EnrollmentService {
   /**
@@ -14,7 +18,7 @@ export class EnrollmentService {
     });
 
     if (existing) {
-      throw new Error('Member already enrolled in this quest');
+      throw new BadRequestError('Member already enrolled in this quest');
     }
 
     // Get quest steps
@@ -30,7 +34,7 @@ export class EnrollmentService {
     });
 
     if (!quest) {
-      throw new Error('Quest not found');
+      throw new NotFoundError('Quest', questId);
     }
 
     // Create enrollment
@@ -55,6 +59,23 @@ export class EnrollmentService {
         })
       )
     );
+
+    // Publish enrollment event
+    const enrollmentEvent: MemberEnrolledEvent = {
+      type: 'member.enrolled',
+      timestamp: new Date(),
+      aggregateId: enrollment.id,
+      enrollmentId: enrollment.id,
+      memberId,
+      questId,
+    };
+    await eventBus.publish(enrollmentEvent);
+
+    logger.info('Member enrolled in quest', {
+      enrollmentId: enrollment.id,
+      memberId,
+      questId,
+    });
 
     return this.getEnrollmentDetails(enrollment.id);
   }
@@ -91,20 +112,20 @@ export class EnrollmentService {
     });
 
     if (!enrollment) {
-      throw new Error('Enrollment not found');
+      throw new NotFoundError('Enrollment');
     }
 
     const progressRecord = enrollment.stepProgress.find((p) => p.stepId === stepId);
     if (!progressRecord) {
-      throw new Error('Step progress not found');
+      throw new NotFoundError('Step progress');
     }
 
     if (progressRecord.status === 'completed') {
-      throw new Error('Step already completed');
+      throw new BadRequestError('Step already completed');
     }
 
     if (progressRecord.status === 'locked') {
-      throw new Error('Step is locked');
+      throw new BadRequestError('Step is locked - complete previous steps first');
     }
 
     // Mark step as completed
@@ -139,15 +160,68 @@ export class EnrollmentService {
           data: { status: 'available' },
         });
       }
+
+      // Publish step completed event
+      const stepEvent: StepCompletedEvent = {
+        type: 'step.completed',
+        timestamp: new Date(),
+        aggregateId: progressRecord.id,
+        enrollmentId: enrollment.id,
+        memberId,
+        questId,
+        stepId,
+        stepType: progressRecord.step.stepType,
+        evidence: evidence as Record<string, unknown>,
+      };
+      await eventBus.publish(stepEvent);
     } else {
       // All steps completed - mark quest as completed
+      const completedAt = new Date();
       await prisma.memberQuestEnrollment.update({
         where: { id: enrollment.id },
         data: {
           status: 'completed',
-          completedAt: new Date(),
+          completedAt,
         },
       });
+
+      // Publish quest completed event
+      const questEvent: QuestCompletedEvent = {
+        type: 'quest.completed',
+        timestamp: completedAt,
+        aggregateId: enrollment.id,
+        enrollmentId: enrollment.id,
+        memberId,
+        questId,
+        questTitle: enrollment.quest.title,
+        completedAt,
+        reward: enrollment.quest.rewardJson as unknown as QuestCompletedEvent['reward'],
+        durationMinutes: enrollment.startedAt
+          ? Math.round((completedAt.getTime() - enrollment.startedAt.getTime()) / 60000)
+          : undefined,
+      };
+      await eventBus.publish(questEvent);
+
+      logger.info('Quest completed', {
+        enrollmentId: enrollment.id,
+        memberId,
+        questId,
+        questTitle: enrollment.quest.title,
+      });
+
+      // Publish step completed event for the final step
+      const stepEvent: StepCompletedEvent = {
+        type: 'step.completed',
+        timestamp: new Date(),
+        aggregateId: progressRecord.id,
+        enrollmentId: enrollment.id,
+        memberId,
+        questId,
+        stepId,
+        stepType: progressRecord.step.stepType,
+        evidence: evidence as Record<string, unknown>,
+      };
+      await eventBus.publish(stepEvent);
     }
 
     return this.getEnrollmentDetails(enrollment.id);

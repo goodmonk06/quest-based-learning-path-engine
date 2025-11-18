@@ -43,6 +43,10 @@ model Quest {
   questLine        QuestLine @relation(fields: [questLineId], references: [id], onDelete: Cascade)
   steps            QuestStep[]
   enrollments      MemberQuestEnrollment[]
+  analytics        QuestAnalytics?
+  prerequisites    QuestPrerequisite[] @relation("PrerequisiteQuest")
+  dependentQuests  QuestPrerequisite[] @relation("DependentQuest")
+  achievements     Achievement[]
 
   @@index([questLineId])
   @@map("quests")
@@ -106,4 +110,80 @@ model MemberQuestStepProgress {
   @@index([memberEnrollmentId])
   @@index([stepId])
   @@map("member_quest_step_progress")
+}
+
+// Quest Prerequisites: Defines quest dependencies
+model QuestPrerequisite {
+  id                String   @id @default(cuid())
+  questId           String   // The quest that has prerequisites
+  prerequisiteId    String   // The quest that must be completed first
+  required          Boolean  @default(true) // If false, it's just a recommendation
+  createdAt         DateTime @default(now())
+
+  quest             Quest    @relation("DependentQuest", fields: [questId], references: [id], onDelete: Cascade)
+  prerequisiteQuest Quest    @relation("PrerequisiteQuest", fields: [prerequisiteId], references: [id], onDelete: Cascade)
+
+  @@unique([questId, prerequisiteId])
+  @@index([questId])
+  @@index([prerequisiteId])
+  @@map("quest_prerequisites")
+}
+
+// Achievement: Badges/achievements earned by completing quests or milestones
+model Achievement {
+  id                String   @id @default(cuid())
+  key               String   @unique
+  title             String
+  description       String
+  iconUrl           String?
+  criteriaType      String   // 'quest_completion' | 'quest_line_completion' | 'streak' | 'custom'
+  criteriaJson      Json     // { questId?, questLineId?, count?, etc. }
+  rewardJson        Json?    // Optional currency reward
+  rarity            String   @default("common") // 'common' | 'rare' | 'epic' | 'legendary'
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  relatedQuestId    String?
+  relatedQuest      Quest?   @relation(fields: [relatedQuestId], references: [id], onDelete: SetNull)
+
+  earnedBy          MemberAchievement[]
+
+  @@index([criteriaType])
+  @@map("achievements")
+}
+
+// Member Achievement: Tracks which members earned which achievements
+model MemberAchievement {
+  id             String      @id @default(cuid())
+  memberId       String
+  achievementId  String
+  earnedAt       DateTime    @default(now())
+  metadata       Json?       // Additional context about how it was earned
+
+  achievement    Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+
+  @@unique([memberId, achievementId])
+  @@index([memberId])
+  @@index([achievementId])
+  @@index([earnedAt])
+  @@map("member_achievements")
+}
+
+// Quest Analytics: Aggregated stats for each quest
+model QuestAnalytics {
+  id                     String   @id @default(cuid())
+  questId                String   @unique
+  totalEnrollments       Int      @default(0)
+  totalCompletions       Int      @default(0)
+  totalAbandoned         Int      @default(0)
+  averageCompletionTime  Int?     // In minutes
+  completionRate         Float?   // Percentage (0-100)
+  averageRating          Float?   // If we add ratings later
+  updatedAt              DateTime @updatedAt
+
+  quest                  Quest    @relation(fields: [questId], references: [id], onDelete: Cascade)
+
+  @@index([completionRate])
+  @@index([totalCompletions])
+  @@map("quest_analytics")
 }
