@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: quest-engine-db
+    environment:
+      POSTGRES_USER: quest_user
+      POSTGRES_PASSWORD: quest_password
+      POSTGRES_DB: quest_engine
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U quest_user -d quest_engine']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: quest-engine-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://quest_user:quest_password@postgres:5432/quest_engine?schema=public
+      API_PORT: 3000
+      API_HOST: 0.0.0.0
+      NODE_ENV: production
+    ports:
+      - '3000:3000'
+    command: sh -c "npm run db:migrate:deploy && npm run db:seed && npm start"
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: quest-engine-web
+    depends_on:
+      - api
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:3000
+    ports:
+      - '3001:3001'
+
+volumes:
+  postgres_data:

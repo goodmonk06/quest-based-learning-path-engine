@@ -1,0 +1,109 @@
+// Prisma schema for Quest-Based Learning Path Engine
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Quest Line: A themed collection of related quests
+model QuestLine {
+  id                  String    @id @default(cuid())
+  communityId         String
+  key                 String    @unique
+  title               String
+  descriptionMarkdown String    @db.Text
+  themeTagsJson       Json      // { tags: string[], categories?: string[] }
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  quests              Quest[]
+
+  @@index([communityId])
+  @@map("quest_lines")
+}
+
+// Quest: An individual learning journey with multiple steps
+model Quest {
+  id               String    @id @default(cuid())
+  questLineId      String
+  key              String    @unique
+  title            String
+  summaryMarkdown  String    @db.Text
+  difficulty       Int       // 1-5
+  estimatedMinutes Int
+  requiredTagsJson Json      // { required?: string[], preferred?: string[] }
+  rewardJson       Json      // { currencyCode: string, amount: number, bonusMultiplier?: number }
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  questLine        QuestLine @relation(fields: [questLineId], references: [id], onDelete: Cascade)
+  steps            QuestStep[]
+  enrollments      MemberQuestEnrollment[]
+
+  @@index([questLineId])
+  @@map("quests")
+}
+
+// Quest Step: Individual actionable step within a quest
+model QuestStep {
+  id              String    @id @default(cuid())
+  questId         String
+  orderIndex      Int
+  stepType        String    // 'read' | 'video' | 'exercise' | 'reflection' | 'ritual'
+  title           String
+  contentMarkdown String    @db.Text
+  metaJson        Json      // { videoUrl?, readingUrl?, estimatedMinutes?, resources?: [] }
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  quest           Quest     @relation(fields: [questId], references: [id], onDelete: Cascade)
+  progress        MemberQuestStepProgress[]
+
+  @@unique([questId, orderIndex])
+  @@index([questId])
+  @@map("quest_steps")
+}
+
+// Member Quest Enrollment: Tracks member participation in quests
+model MemberQuestEnrollment {
+  id          String    @id @default(cuid())
+  memberId    String
+  questId     String
+  status      String    // 'not_started' | 'in_progress' | 'completed' | 'abandoned'
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  quest       Quest     @relation(fields: [questId], references: [id], onDelete: Cascade)
+  stepProgress MemberQuestStepProgress[]
+
+  @@unique([memberId, questId])
+  @@index([memberId])
+  @@index([questId])
+  @@index([status])
+  @@map("member_quest_enrollments")
+}
+
+// Member Quest Step Progress: Tracks progress on individual steps
+model MemberQuestStepProgress {
+  id                   String   @id @default(cuid())
+  memberEnrollmentId   String
+  stepId               String
+  status               String   // 'locked' | 'available' | 'completed'
+  updatedAt            DateTime @updatedAt
+  evidenceJson         Json?    // { completedAt?, notes?, timeSpentMinutes?, submittedContent? }
+  createdAt            DateTime @default(now())
+
+  enrollment           MemberQuestEnrollment @relation(fields: [memberEnrollmentId], references: [id], onDelete: Cascade)
+  step                 QuestStep @relation(fields: [stepId], references: [id], onDelete: Cascade)
+
+  @@unique([memberEnrollmentId, stepId])
+  @@index([memberEnrollmentId])
+  @@index([stepId])
+  @@map("member_quest_step_progress")
+}
